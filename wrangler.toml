@@ -1,0 +1,6 @@
+name = "glm-free-api-neo"
+main = "src/index.ts"
+compatibility_date = "2024-05-12"
+
+[vars]
+SIGN_SECRET = "8a1317a7468aa3ad86e997d08f3f31cb"
