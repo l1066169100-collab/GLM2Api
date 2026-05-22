@@ -10,35 +10,752 @@ function getWelcomeHtml(apiKeyEnabled: boolean): string {
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>GLM Free API Neo</title>
 <style>
-  body { font-family: system-ui, sans-serif; max-width: 800px; margin: 60px auto; padding: 0 20px; color: #333; line-height: 1.6; }
-  h1 { color: #1a1a1a; }
-  code { background: #f4f4f4; padding: 2px 6px; border-radius: 4px; font-size: 0.9em; }
-  pre { background: #f4f4f4; padding: 16px; border-radius: 8px; overflow-x: auto; }
-  .endpoint { margin: 12px 0; padding: 12px; background: #fafafa; border-left: 4px solid #007acc; border-radius: 4px; }
+  :root {
+    --bg: #f3efe6;
+    --panel: rgba(255, 252, 245, 0.88);
+    --ink: #1f2a1f;
+    --muted: #566356;
+    --line: rgba(31, 42, 31, 0.12);
+    --accent: #1f7a5a;
+    --accent-2: #b86a32;
+    --danger: #b43f3f;
+    --shadow: 0 24px 60px rgba(40, 47, 39, 0.12);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    color: var(--ink);
+    background:
+      radial-gradient(circle at top left, rgba(184, 106, 50, 0.18), transparent 28%),
+      radial-gradient(circle at top right, rgba(31, 122, 90, 0.16), transparent 26%),
+      linear-gradient(180deg, #f6f1e8 0%, #efe7d7 100%);
+    font-family: "Segoe UI", "PingFang SC", "Noto Sans SC", sans-serif;
+    line-height: 1.5;
+  }
+  .shell {
+    width: min(1200px, calc(100% - 32px));
+    margin: 24px auto 40px;
+  }
+  .hero {
+    display: grid;
+    gap: 18px;
+    padding: 24px;
+    border: 1px solid var(--line);
+    border-radius: 24px;
+    background: var(--panel);
+    box-shadow: var(--shadow);
+    backdrop-filter: blur(18px);
+  }
+  .hero-top {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-radius: 999px;
+    background: rgba(31, 122, 90, 0.1);
+    color: var(--accent);
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  h1 {
+    margin: 0;
+    font-size: clamp(30px, 5vw, 54px);
+    line-height: 0.95;
+    letter-spacing: -0.04em;
+  }
+  .sub {
+    max-width: 820px;
+    color: var(--muted);
+    font-size: 16px;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: 360px minmax(0, 1fr);
+    gap: 20px;
+    margin-top: 20px;
+  }
+  .card {
+    border: 1px solid var(--line);
+    border-radius: 22px;
+    background: var(--panel);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+  }
+  .card h2 {
+    margin: 0;
+    font-size: 15px;
+    letter-spacing: 0.02em;
+  }
+  .card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 18px;
+    border-bottom: 1px solid var(--line);
+    background: rgba(255, 255, 255, 0.4);
+  }
+  .card-body {
+    padding: 18px;
+  }
+  .meta {
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .stack {
+    display: grid;
+    gap: 14px;
+  }
+  .row {
+    display: grid;
+    gap: 8px;
+  }
+  label {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--ink);
+  }
+  input, select, textarea, button {
+    font: inherit;
+  }
+  input, select, textarea {
+    width: 100%;
+    padding: 12px 14px;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.74);
+    color: var(--ink);
+    outline: none;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+  }
+  textarea {
+    resize: vertical;
+    min-height: 120px;
+  }
+  input:focus, select:focus, textarea:focus {
+    border-color: rgba(31, 122, 90, 0.48);
+    box-shadow: 0 0 0 4px rgba(31, 122, 90, 0.1);
+  }
+  .toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  button {
+    border: 0;
+    border-radius: 14px;
+    padding: 12px 16px;
+    cursor: pointer;
+    transition: transform 0.15s ease, opacity 0.15s ease, box-shadow 0.15s ease;
+  }
+  button:hover { transform: translateY(-1px); }
+  button:disabled { opacity: 0.45; cursor: not-allowed; transform: none; }
+  .primary {
+    background: linear-gradient(135deg, var(--accent), #2d9c77);
+    color: #fff;
+    box-shadow: 0 14px 28px rgba(31, 122, 90, 0.24);
+  }
+  .secondary {
+    background: rgba(184, 106, 50, 0.12);
+    color: var(--accent-2);
+  }
+  .ghost {
+    background: rgba(31, 42, 31, 0.06);
+    color: var(--ink);
+  }
+  .status {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+    padding: 12px 14px;
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.5);
+    border: 1px solid var(--line);
+  }
+  .status strong { font-size: 13px; }
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    border-radius: 999px;
+    background: rgba(31, 122, 90, 0.1);
+    color: var(--accent);
+    font-size: 12px;
+    font-weight: 700;
+  }
+  .pill.error {
+    background: rgba(180, 63, 63, 0.1);
+    color: var(--danger);
+  }
+  .hint {
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .tab {
+    padding: 9px 12px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    background: rgba(255, 255, 255, 0.45);
+    color: var(--muted);
+    font-size: 13px;
+    font-weight: 700;
+  }
+  .tab.active {
+    background: var(--ink);
+    color: #fff;
+    border-color: var(--ink);
+  }
+  .viewer {
+    display: grid;
+    gap: 14px;
+  }
+  .pane {
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    overflow: hidden;
+    background: rgba(253, 250, 244, 0.84);
+  }
+  .pane-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--line);
+    background: rgba(31, 42, 31, 0.03);
+  }
+  .pane-head strong {
+    font-size: 13px;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+  }
+  pre {
+    margin: 0;
+    padding: 16px;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    background: rgba(255, 255, 255, 0.62);
+    color: #203124;
+    font-size: 13px;
+    line-height: 1.55;
+  }
+  .mini {
+    display: grid;
+    gap: 10px;
+  }
+  .endpoints {
+    display: grid;
+    gap: 10px;
+  }
+  .endpoint {
+    padding: 12px 14px;
+    border-radius: 16px;
+    border: 1px solid var(--line);
+    background: rgba(255, 255, 255, 0.5);
+  }
+  .endpoint strong {
+    display: inline-block;
+    min-width: 52px;
+    color: var(--accent);
+  }
+  code {
+    padding: 2px 6px;
+    border-radius: 8px;
+    background: rgba(31, 42, 31, 0.07);
+    font-size: 0.92em;
+  }
+  .notice {
+    padding: 14px 16px;
+    border-radius: 16px;
+    background: rgba(184, 106, 50, 0.1);
+    color: #7b451f;
+    border: 1px solid rgba(184, 106, 50, 0.18);
+    font-size: 13px;
+  }
+  @media (max-width: 960px) {
+    .grid { grid-template-columns: 1fr; }
+  }
 </style>
 </head>
 <body>
-<h1>GLM Free API Neo</h1>
-<p>零配置、无 KV、无管理界面的 GLM API 代理服务。</p>
-<p>每次请求自动获取访客 Token，默认无需上游 API Key，部署即用。</p>
-${apiKeyEnabled ? '<p><strong>当前已启用访问秘钥：</strong>请求时请携带 <code>Authorization: Bearer &lt;your-key&gt;</code> 或 <code>x-api-key</code>。</p>' : ""}
+<div class="shell">
+  <section class="hero">
+    <div class="hero-top">
+      <span class="badge">GLM Free API Neo</span>
+      <span class="pill">${apiKeyEnabled ? "API Key Enabled" : "Open Access Mode"}</span>
+    </div>
+    <div>
+      <h1>浏览器里直接验证兼容层</h1>
+      <p class="sub">这个页面不是文档页，而是一个最小测试台。你可以切 OpenAI 或 Claude 模式，发普通消息、开流式、带工具定义，然后立刻看到请求体、原始响应和解析结果，确认刚加的兼容功能到底有没有生效。</p>
+    </div>
+    ${apiKeyEnabled ? '<div class="notice">当前服务已开启访问秘钥。下面测试时请填写 <code>Authorization: Bearer &lt;your-key&gt;</code> 对应的 Key，或者直接填到 API Key 输入框。</div>' : '<div class="notice">当前服务未开启访问秘钥，可以直接在页面里发请求测试。</div>'}
+  </section>
 
-<h2>支持的端点</h2>
-<div class="endpoint"><strong>POST</strong> <code>/v1/chat/completions</code> — OpenAI 格式对话</div>
-<div class="endpoint"><strong>POST</strong> <code>/v1/messages</code> — Claude 格式对话</div>
-<div class="endpoint"><strong>POST</strong> <code>/v1beta/models/...:generateContent</code> — Gemini 格式对话</div>
-<div class="endpoint"><strong>POST</strong> <code>/v1/images/generations</code> — AI 绘图</div>
-<div class="endpoint"><strong>POST</strong> <code>/v1/videos/generations</code> — 视频生成</div>
-<div class="endpoint"><strong>GET</strong> <code>/v1/models</code> — 模型列表</div>
-<div class="endpoint"><strong>POST</strong> <code>/chat/completions</code> — OpenAI 根路径别名</div>
-<div class="endpoint"><strong>GET</strong> <code>/healthz</code> / <code>/readyz</code> — 健康检查</div>
+  <div class="grid">
+    <section class="card">
+      <div class="card-head">
+        <h2>测试面板</h2>
+        <span class="meta">在浏览器里发真实请求</span>
+      </div>
+      <div class="card-body stack">
+        <div class="row">
+          <label for="mode">协议模式</label>
+          <div class="tabs" id="modeTabs">
+            <button type="button" class="tab active" data-mode="openai">OpenAI</button>
+            <button type="button" class="tab" data-mode="claude">Claude</button>
+          </div>
+        </div>
 
-<h2>使用示例</h2>
-<pre>curl http://localhost:8787/v1/chat/completions \\
-  -H "Content-Type: application/json" \\
-  ${apiKeyEnabled ? '-H "Authorization: Bearer your-key" \\\\\n  ' : ""}-d '{"model":"glm-4-flash","messages":[{"role":"user","content":"你好"}]}'</pre>
+        <div class="row">
+          <label for="apiKey">API Key</label>
+          <input id="apiKey" type="password" placeholder="${apiKeyEnabled ? "输入访问秘钥" : "如果你后面启用了 API Key，这里再填"}" />
+        </div>
 
-<p>${apiKeyEnabled ? "已启用访问秘钥，请先配置后再调用。" : "无需 API Key，直接调用即可。"}</p>
+        <div class="row">
+          <label for="model">模型名</label>
+          <input id="model" type="text" value="claude-sonnet-4-6" />
+          <div class="hint">这里可以直接填别名，例如 <code>claude-sonnet-4-6</code>、<code>gpt-4o</code>、<code>glm-5</code>。</div>
+        </div>
+
+        <div class="row">
+          <label for="system">System / 指令</label>
+          <textarea id="system" rows="4" placeholder="可选。Claude 模式会走 system 字段，OpenAI 模式会插入 system message。">你是一个用于验证兼容性的测试助手。</textarea>
+        </div>
+
+        <div class="row">
+          <label for="prompt">用户输入</label>
+          <textarea id="prompt" rows="6" placeholder="输入一段消息，或者让它调用工具。">请先简单自我介绍，然后告诉我你当前支持哪些接口格式。</textarea>
+        </div>
+
+        <div class="row">
+          <label for="tools">工具定义 JSON</label>
+          <textarea id="tools" rows="10" placeholder="留空表示不带工具。">${`[
+  {
+    "name": "get_weather",
+    "description": "查询天气",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "location": { "type": "string", "description": "城市名" }
+      },
+      "required": ["location"]
+    }
+  }
+]`}</textarea>
+          <div class="hint">Claude 模式按 <code>tools[].input_schema</code> 发；OpenAI 模式会自动转成 function tools。</div>
+        </div>
+
+        <div class="row">
+          <label for="toolResults">Claude tool_result JSON</label>
+          <textarea id="toolResults" rows="8" placeholder="只在 Claude 多轮工具测试时使用。">${`[]`}</textarea>
+          <div class="hint">如果你要验证 Claude 的 <code>tool_result</code> 兼容，可以把上一次响应里的 <code>tool_use</code> id 填回来。</div>
+        </div>
+
+        <div class="status">
+          <strong>选项</strong>
+          <label><input id="stream" type="checkbox" checked /> 流式</label>
+          <label><input id="includeTools" type="checkbox" checked /> 带工具</label>
+          <label><input id="includeSystem" type="checkbox" checked /> 带系统提示</label>
+        </div>
+
+        <div class="toolbar">
+          <button id="sendBtn" class="primary" type="button">发送测试请求</button>
+          <button id="countBtn" class="secondary" type="button">Claude Count Tokens</button>
+          <button id="clearBtn" class="ghost" type="button">清空结果</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="viewer">
+      <div class="card">
+        <div class="card-head">
+          <h2>运行状态</h2>
+          <span id="statusPill" class="pill">Idle</span>
+        </div>
+        <div class="card-body mini">
+          <div class="status">
+            <strong>最近一次路径</strong>
+            <code id="lastPath">-</code>
+          </div>
+          <div class="status">
+            <strong>HTTP 状态</strong>
+            <code id="httpStatus">-</code>
+          </div>
+          <div class="status">
+            <strong>兼容检查点</strong>
+            <span id="compatHint" class="meta">还没有发起测试</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="pane">
+        <div class="pane-head">
+          <strong>请求体</strong>
+          <button class="ghost" type="button" id="copyRequestBtn">复制</button>
+        </div>
+        <pre id="requestPreview">尚未生成请求</pre>
+      </div>
+
+      <div class="pane">
+        <div class="pane-head">
+          <strong>流式事件 / 原始响应</strong>
+          <button class="ghost" type="button" id="copyRawBtn">复制</button>
+        </div>
+        <pre id="rawOutput">尚未发送请求</pre>
+      </div>
+
+      <div class="pane">
+        <div class="pane-head">
+          <strong>解析结果</strong>
+          <button class="ghost" type="button" id="copyParsedBtn">复制</button>
+        </div>
+        <pre id="parsedOutput">尚未解析</pre>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>支持的关键接口</h2>
+          <span class="meta">用于页面内测试</span>
+        </div>
+        <div class="card-body endpoints">
+          <div class="endpoint"><strong>POST</strong> <code>/v1/chat/completions</code></div>
+          <div class="endpoint"><strong>POST</strong> <code>/anthropic/v1/messages</code></div>
+          <div class="endpoint"><strong>POST</strong> <code>/anthropic/v1/messages/count_tokens</code></div>
+          <div class="endpoint"><strong>GET</strong> <code>/anthropic/v1/models</code></div>
+          <div class="endpoint"><strong>GET</strong> <code>/v1/models</code></div>
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<script>
+(() => {
+  const state = { mode: "openai", abortController: null };
+  const els = {
+    apiKey: document.getElementById("apiKey"),
+    model: document.getElementById("model"),
+    system: document.getElementById("system"),
+    prompt: document.getElementById("prompt"),
+    tools: document.getElementById("tools"),
+    toolResults: document.getElementById("toolResults"),
+    stream: document.getElementById("stream"),
+    includeTools: document.getElementById("includeTools"),
+    includeSystem: document.getElementById("includeSystem"),
+    sendBtn: document.getElementById("sendBtn"),
+    countBtn: document.getElementById("countBtn"),
+    clearBtn: document.getElementById("clearBtn"),
+    requestPreview: document.getElementById("requestPreview"),
+    rawOutput: document.getElementById("rawOutput"),
+    parsedOutput: document.getElementById("parsedOutput"),
+    statusPill: document.getElementById("statusPill"),
+    lastPath: document.getElementById("lastPath"),
+    httpStatus: document.getElementById("httpStatus"),
+    compatHint: document.getElementById("compatHint"),
+    copyRequestBtn: document.getElementById("copyRequestBtn"),
+    copyRawBtn: document.getElementById("copyRawBtn"),
+    copyParsedBtn: document.getElementById("copyParsedBtn"),
+  };
+
+  const tabs = Array.from(document.querySelectorAll("[data-mode]"));
+
+  function setMode(mode) {
+    state.mode = mode;
+    tabs.forEach((tab) => tab.classList.toggle("active", tab.dataset.mode === mode));
+    els.model.value = mode === "claude" ? "claude-sonnet-4-6" : "gpt-4o";
+    els.compatHint.textContent = mode === "claude"
+      ? "Claude 模式会验证 messages、tool_use、tool_result、count_tokens。"
+      : "OpenAI 模式会验证 chat completions 和模型别名映射。";
+  }
+
+  function setStatus(text, isError = false) {
+    els.statusPill.textContent = text;
+    els.statusPill.classList.toggle("error", isError);
+  }
+
+  function parseJsonInput(text, fallback) {
+    const raw = String(text || "").trim();
+    if (!raw) return fallback;
+    return JSON.parse(raw);
+  }
+
+  function buildMessages() {
+    const prompt = els.prompt.value.trim();
+    const toolResults = parseJsonInput(els.toolResults.value, []);
+    const messages = [];
+
+    if (state.mode === "claude") {
+      if (prompt) {
+        messages.push({ role: "user", content: [{ type: "text", text: prompt }] });
+      }
+      if (Array.isArray(toolResults) && toolResults.length > 0) {
+        messages.push({ role: "user", content: toolResults });
+      }
+      return messages;
+    }
+
+    if (els.includeSystem.checked && els.system.value.trim()) {
+      messages.push({ role: "system", content: els.system.value.trim() });
+    }
+    if (prompt) {
+      messages.push({ role: "user", content: prompt });
+    }
+    return messages;
+  }
+
+  function buildPayload() {
+    const model = els.model.value.trim();
+    const systemText = els.system.value.trim();
+    const stream = !!els.stream.checked;
+    const tools = els.includeTools.checked ? parseJsonInput(els.tools.value, []) : [];
+
+    if (state.mode === "claude") {
+      const payload = {
+        model,
+        stream,
+        messages: buildMessages(),
+      };
+      if (els.includeSystem.checked && systemText) payload.system = systemText;
+      if (Array.isArray(tools) && tools.length > 0) payload.tools = tools;
+      return payload;
+    }
+
+    const payload = {
+      model,
+      stream,
+      messages: buildMessages(),
+    };
+    if (Array.isArray(tools) && tools.length > 0) payload.tools = tools.map((tool) => ({
+      type: "function",
+      function: {
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.input_schema || tool.parameters || { type: "object", properties: {} },
+      },
+    }));
+    return payload;
+  }
+
+  function buildHeaders() {
+    const headers = { "Content-Type": "application/json" };
+    const apiKey = els.apiKey.value.trim();
+    if (apiKey) {
+      headers.Authorization = "Bearer " + apiKey;
+      headers["x-api-key"] = apiKey;
+    }
+    if (state.mode === "claude") {
+      headers["anthropic-version"] = "2023-06-01";
+    }
+    return headers;
+  }
+
+  function render(obj) {
+    return typeof obj === "string" ? obj : JSON.stringify(obj, null, 2);
+  }
+
+  async function copyText(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      setStatus("Copied");
+      setTimeout(() => setStatus("Idle"), 900);
+    } catch {
+      setStatus("Copy failed", true);
+    }
+  }
+
+  async function runCountTokens() {
+    try {
+      setStatus("Calling count_tokens");
+      const payload = {
+        model: els.model.value.trim() || "claude-sonnet-4-6",
+        messages: buildMessages(),
+      };
+      if (els.includeSystem.checked && els.system.value.trim()) {
+        payload.system = els.system.value.trim();
+      }
+      els.requestPreview.textContent = render(payload);
+      els.lastPath.textContent = "/anthropic/v1/messages/count_tokens";
+      const response = await fetch("/anthropic/v1/messages/count_tokens", {
+        method: "POST",
+        headers: buildHeaders(),
+        body: JSON.stringify(payload),
+      });
+      const text = await response.text();
+      els.httpStatus.textContent = String(response.status);
+      els.rawOutput.textContent = text;
+      try {
+        els.parsedOutput.textContent = render(JSON.parse(text));
+      } catch {
+        els.parsedOutput.textContent = text;
+      }
+      setStatus(response.ok ? "count_tokens ok" : "count_tokens failed", !response.ok);
+    } catch (error) {
+      els.httpStatus.textContent = "network error";
+      els.rawOutput.textContent = String(error);
+      els.parsedOutput.textContent = String(error);
+      setStatus("count_tokens error", true);
+    }
+  }
+
+  async function runRequest() {
+    if (state.abortController) {
+      state.abortController.abort();
+    }
+    const controller = new AbortController();
+    state.abortController = controller;
+
+    const payload = buildPayload();
+    const path = state.mode === "claude" ? "/anthropic/v1/messages" : "/v1/chat/completions";
+    const expectsStream = !!payload.stream;
+
+    els.requestPreview.textContent = render(payload);
+    els.rawOutput.textContent = "";
+    els.parsedOutput.textContent = "";
+    els.lastPath.textContent = path;
+    els.httpStatus.textContent = "-";
+    setStatus("Requesting");
+
+    try {
+      const response = await fetch(path, {
+        method: "POST",
+        headers: buildHeaders(),
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+
+      els.httpStatus.textContent = String(response.status);
+
+      if (!expectsStream) {
+        const text = await response.text();
+        els.rawOutput.textContent = text;
+        try {
+          const parsed = JSON.parse(text);
+          els.parsedOutput.textContent = render(parsed);
+          if (state.mode === "claude") {
+            const hasToolUse = Array.isArray(parsed.content) && parsed.content.some((item) => item.type === "tool_use");
+            els.compatHint.textContent = hasToolUse
+              ? "检测到 Claude tool_use 响应，工具兼容链路已触发。"
+              : "收到非流式响应，可以继续验证模型回显、错误体和 content 结构。";
+          }
+        } catch {
+          els.parsedOutput.textContent = text;
+        }
+        setStatus(response.ok ? "Completed" : "Failed", !response.ok);
+        return;
+      }
+
+      const reader = response.body && response.body.getReader ? response.body.getReader() : null;
+      if (!reader) {
+        const text = await response.text();
+        els.rawOutput.textContent = text;
+        els.parsedOutput.textContent = text;
+        setStatus("No stream body", true);
+        return;
+      }
+
+      const decoder = new TextDecoder();
+      let raw = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        raw += decoder.decode(value, { stream: true });
+        els.rawOutput.textContent = raw;
+      }
+
+      if (state.mode === "claude") {
+        const events = raw
+          .split("\\n\\n")
+          .map((chunk) => chunk.trim())
+          .filter(Boolean)
+          .map((chunk) => {
+            const lines = chunk.split("\\n");
+            const eventLine = lines.find((line) => line.startsWith("event: "));
+            const dataLine = lines.find((line) => line.startsWith("data: "));
+            const event = eventLine ? eventLine.slice(7) : "message";
+            const dataText = dataLine ? dataLine.slice(6) : "";
+            try {
+              return { event, data: JSON.parse(dataText) };
+            } catch {
+              return { event, data: dataText };
+            }
+          });
+        els.parsedOutput.textContent = render(events);
+        const hasToolEvent = events.some((item) => item.event === "content_block_start" && item.data && item.data.content_block && item.data.content_block.type === "tool_use");
+        const hasErrorEvent = events.some((item) => item.event === "error");
+        if (hasErrorEvent) {
+          els.compatHint.textContent = "Claude 流式 error 事件已返回，说明错误体兼容已生效。";
+        } else if (hasToolEvent) {
+          els.compatHint.textContent = "Claude 流式 tool_use 事件已返回，说明工具事件兼容已生效。";
+        } else {
+          els.compatHint.textContent = "Claude 流式事件已返回，可检查 message_start / text_delta / message_stop。";
+        }
+      } else {
+        const frames = raw
+          .split("\\n\\n")
+          .map((chunk) => chunk.trim())
+          .filter(Boolean)
+          .map((chunk) => chunk.startsWith("data: ") ? chunk.slice(6) : chunk)
+          .map((chunk) => {
+            if (chunk === "[DONE]") return chunk;
+            try {
+              return JSON.parse(chunk);
+            } catch {
+              return chunk;
+            }
+          });
+        els.parsedOutput.textContent = render(frames);
+        els.compatHint.textContent = "OpenAI 流式数据已返回，可检查 delta、finish_reason 和模型映射。";
+      }
+
+      setStatus(response.ok ? "Stream completed" : "Stream failed", !response.ok);
+    } catch (error) {
+      const message = error && error.name === "AbortError" ? "Request aborted" : String(error);
+      els.rawOutput.textContent = message;
+      els.parsedOutput.textContent = message;
+      els.httpStatus.textContent = "network error";
+      setStatus("Request error", true);
+    } finally {
+      if (state.abortController === controller) {
+        state.abortController = null;
+      }
+    }
+  }
+
+  tabs.forEach((tab) => tab.addEventListener("click", () => setMode(tab.dataset.mode)));
+  els.sendBtn.addEventListener("click", runRequest);
+  els.countBtn.addEventListener("click", runCountTokens);
+  els.clearBtn.addEventListener("click", () => {
+    els.rawOutput.textContent = "已清空";
+    els.parsedOutput.textContent = "已清空";
+    els.requestPreview.textContent = "已清空";
+    els.httpStatus.textContent = "-";
+    els.lastPath.textContent = "-";
+    els.compatHint.textContent = "等待下一次测试";
+    setStatus("Idle");
+  });
+  els.copyRequestBtn.addEventListener("click", () => copyText(els.requestPreview.textContent));
+  els.copyRawBtn.addEventListener("click", () => copyText(els.rawOutput.textContent));
+  els.copyParsedBtn.addEventListener("click", () => copyText(els.parsedOutput.textContent));
+
+  setMode("openai");
+})();
+</script>
 </body>
 </html>`;
 }
