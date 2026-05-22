@@ -1056,11 +1056,6 @@ function normalizeModelName(model: any): string {
   return MODEL_ALIASES[lower] || text;
 }
 
-function resolveClaudeResponseModel(model: any): string {
-  const text = isString(model) ? model.trim() : "";
-  return text || "claude-sonnet-4-6";
-}
-
 function extractApiKey(request: Request): string | null {
   const bearerToken = extractBearerToken(request.headers.get("Authorization"));
   if (bearerToken) return bearerToken;
@@ -1132,7 +1127,6 @@ async function handleClaudeMessages(request: Request, env: Env): Promise<Respons
     stream,
     convId,
     tools,
-    resolveClaudeResponseModel(model),
   );
   if (stream && result instanceof ReadableStream) {
     return new Response(result, {

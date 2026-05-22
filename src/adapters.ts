@@ -9,293 +9,8 @@ const MODEL_NAME = "glm";
 
 // ==================== Claude Adapter ====================
 
-type ClaudeToolCallState = {
-  nameById: Record<string, string>;
-  lastIdByName: Record<string, string>;
-};
-
-function normalizeClaudeModelName(model?: string): string {
-  return typeof model === "string" && model.trim() ? model.trim() : MODEL_NAME;
-}
-
-function safeJsonStringify(value: any): string {
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value ?? "");
-  }
-}
-
-function safeJsonParse(value: any): any {
-  if (!isString(value)) return value;
-  try {
-    return JSON.parse(value);
-  } catch {
-    return {};
-  }
-}
-
-function buildDataUrl(source: any): string | null {
-  if (!isObject(source)) return null;
-  if (source.type === "url" && isString(source.url) && source.url.trim()) {
-    return source.url.trim();
-  }
-  if (source.type === "base64" && isString(source.data) && source.data.trim()) {
-    const mediaType = isString(source.media_type) && source.media_type.trim()
-      ? source.media_type.trim()
-      : "application/octet-stream";
-    return `data:${mediaType};base64,${source.data.trim()}`;
-  }
-  return null;
-}
-
-function createClaudeToolCallState(): ClaudeToolCallState {
-  return {
-    nameById: {},
-    lastIdByName: {},
-  };
-}
-
-function rememberClaudeToolCall(state: ClaudeToolCallState, callId: string, name: string) {
-  if (!callId || !name) return;
-  state.nameById[callId] = name;
-  state.lastIdByName[name.toLowerCase()] = callId;
-}
-
-function stringifyClaudeUnknownBlock(block: any): string {
-  if (block == null) return "";
-  return safeJsonStringify(block);
-}
-
-function extractClaudeThinkingText(block: any): string {
-  if (!isObject(block)) return "";
-  if (isString(block.thinking) && block.thinking.trim()) return block.thinking;
-  if (isString(block.text) && block.text.trim()) return block.text;
-  if (isString(block.content) && block.content.trim()) return block.content;
-  return "";
-}
-
-function stringifyClaudeToolResultContent(content: any): string {
-  if (isString(content)) return content;
-  if (isArray(content)) {
-    const hasNonText = content.some((item: any) => item?.type && item.type !== "text");
-    if (!hasNonText) {
-      return content.map((item: any) => item?.type === "text" && isString(item.text) ? item.text : "")
-        .filter(Boolean)
-        .join("\n");
-    }
-    return safeJsonStringify({ type: "tool_result", content });
-  }
-  if (content == null) return "";
-  return safeJsonStringify({ type: "tool_result", content });
-}
-
-function pushClaudeUserContentPart(parts: any[], item: any) {
-  if (!isObject(item)) return;
-
-  if (item.type === "text" && isString(item.text)) {
-    parts.push({ type: "text", text: item.text });
-    return;
-  }
-
-  if (item.type === "thinking") {
-    const thinkingText = extractClaudeThinkingText(item);
-    if (thinkingText) {
-      parts.push({ type: "text", text: thinkingText });
-    }
-    return;
-  }
-
-  if (item.type === "image") {
-    const url = buildDataUrl(item.source);
-    if (url) {
-      parts.push({ type: "image_url", image_url: { url } });
-    }
-    return;
-  }
-
-  if (item.type === "document") {
-    const url = buildDataUrl(item.source);
-    if (url) {
-      parts.push({ type: "file", file_url: { url } });
-    }
-    return;
-  }
-
-  const raw = stringifyClaudeUnknownBlock(item);
-  if (raw) {
-    parts.push({ type: "text", text: raw });
-  }
-}
-
-function flushClaudeUserParts(glmMessages: any[], parts: any[]) {
-  if (parts.length === 0) return;
-
-  const snapshot = parts.splice(0, parts.length);
-  const filtered = snapshot.filter((part: any) => {
-    if (part?.type === "text") return isString(part.text) && part.text !== "";
-    return true;
-  });
-  if (filtered.length === 0) return;
-
-  const hasAttachment = filtered.some((part: any) => part.type === "image_url" || part.type === "file");
-  if (!hasAttachment) {
-    glmMessages.push({
-      role: "user",
-      content: filtered
-        .filter((part: any) => part.type === "text")
-        .map((part: any) => part.text)
-        .join("\n"),
-    });
-    return;
-  }
-
-  glmMessages.push({ role: "user", content: filtered });
-}
-
-function normalizeClaudeToolUse(item: any, state: ClaudeToolCallState): any | null {
-  if (!isObject(item) || !isString(item.name) || !item.name.trim()) return null;
-
-  const callId = (isString(item.id) && item.id.trim())
-    || (isString(item.tool_use_id) && item.tool_use_id.trim())
-    || `call_${uuid(false)}`;
-  const name = item.name.trim();
-  rememberClaudeToolCall(state, callId, name);
-
-  return {
-    id: callId,
-    type: "function",
-    function: {
-      name,
-      arguments: safeJsonStringify(item.input || {}),
-    },
-  };
-}
-
-function normalizeClaudeToolResultMessage(item: any, state: ClaudeToolCallState): any | null {
-  if (!isObject(item)) return null;
-
-  let toolCallId = "";
-  if (isString(item.tool_use_id) && item.tool_use_id.trim()) {
-    toolCallId = item.tool_use_id.trim();
-  } else if (isString(item.tool_call_id) && item.tool_call_id.trim()) {
-    toolCallId = item.tool_call_id.trim();
-  }
-
-  let name = isString(item.name) && item.name.trim() ? item.name.trim() : "";
-  if (!toolCallId && name) {
-    toolCallId = state.lastIdByName[name.toLowerCase()] || "";
-  }
-  if (!toolCallId) {
-    toolCallId = `call_${uuid(false)}`;
-  }
-  if (!name) {
-    name = state.nameById[toolCallId] || "";
-  }
-  rememberClaudeToolCall(state, toolCallId, name);
-
-  const toolMessage: any = {
-    role: "tool",
-    tool_call_id: toolCallId,
-    content: stringifyClaudeToolResultContent(item.content),
-  };
-  if (name) {
-    toolMessage.name = name;
-  }
-  return toolMessage;
-}
-
-function flushClaudeAssistantText(glmMessages: any[], textParts: string[]) {
-  if (textParts.length === 0) return;
-  const text = textParts.join("\n");
-  textParts.splice(0, textParts.length);
-  if (!text) return;
-  glmMessages.push({ role: "assistant", content: text });
-}
-
-function flushClaudeAssistantToolCalls(glmMessages: any[], toolCalls: any[]) {
-  if (toolCalls.length === 0) return;
-  glmMessages.push({
-    role: "assistant",
-    content: "",
-    tool_calls: toolCalls.splice(0, toolCalls.length),
-  });
-}
-
-function convertClaudeAssistantContent(content: any, glmMessages: any[], state: ClaudeToolCallState) {
-  if (!isArray(content)) {
-    glmMessages.push({ role: "assistant", content: content ?? "" });
-    return;
-  }
-
-  const textParts: string[] = [];
-  const toolCalls: any[] = [];
-
-  for (const item of content) {
-    if (!isObject(item)) continue;
-
-    if (item.type === "tool_use") {
-      flushClaudeAssistantText(glmMessages, textParts);
-      const toolCall = normalizeClaudeToolUse(item, state);
-      if (toolCall) {
-        toolCalls.push(toolCall);
-      }
-      continue;
-    }
-
-    if (toolCalls.length > 0) {
-      flushClaudeAssistantToolCalls(glmMessages, toolCalls);
-    }
-
-    if (item.type === "text" && isString(item.text)) {
-      textParts.push(item.text);
-      continue;
-    }
-
-    if (item.type === "thinking") {
-      const thinkingText = extractClaudeThinkingText(item);
-      if (thinkingText) {
-        textParts.push(thinkingText);
-      }
-      continue;
-    }
-
-    const raw = stringifyClaudeUnknownBlock(item);
-    if (raw) {
-      textParts.push(raw);
-    }
-  }
-
-  flushClaudeAssistantText(glmMessages, textParts);
-  flushClaudeAssistantToolCalls(glmMessages, toolCalls);
-}
-
-function convertClaudeUserContent(content: any, glmMessages: any[], state: ClaudeToolCallState) {
-  if (!isArray(content)) {
-    glmMessages.push({ role: "user", content: content ?? "" });
-    return;
-  }
-
-  const parts: any[] = [];
-  for (const item of content) {
-    if (isObject(item) && item.type === "tool_result") {
-      flushClaudeUserParts(glmMessages, parts);
-      const toolMessage = normalizeClaudeToolResultMessage(item, state);
-      if (toolMessage) {
-        glmMessages.push(toolMessage);
-      }
-      continue;
-    }
-
-    pushClaudeUserContentPart(parts, item);
-  }
-
-  flushClaudeUserParts(glmMessages, parts);
-}
-
 export function convertClaudeToGLM(messages: any[], system?: string | any[]): any[] {
   const glmMessages: any[] = [];
-  const toolCallState = createClaudeToolCallState();
   let systemText: string | undefined;
   if (system) {
     if (Array.isArray(system)) {
@@ -310,13 +25,32 @@ export function convertClaudeToGLM(messages: any[], system?: string | any[]): an
   }
   for (const msg of messages) {
     if (msg.role === "user") {
-      convertClaudeUserContent(msg.content ?? "", glmMessages, toolCallState);
+      let content = msg.content ?? "";
+      if (isArray(content)) {
+        const texts: string[] = [];
+        for (const item of content) {
+          if (item.type === "text") texts.push(item.text);
+          if (item.type === "tool_result") {
+            texts.push(`工具调用结果 (${item.tool_use_id || ""}):\n${typeof item.content === "string" ? item.content : JSON.stringify(item.content)}`);
+          }
+        }
+        content = texts.join("\n");
+      }
+      glmMessages.push({ role: "user", content });
     } else if (msg.role === "assistant") {
-      convertClaudeAssistantContent(msg.content ?? "", glmMessages, toolCallState);
-    } else if (msg.role === "tool") {
-      glmMessages.push(msg);
-    } else if (msg?.content != null) {
-      glmMessages.push({ role: msg.role, content: msg.content });
+      let content = msg.content ?? "";
+      if (isArray(content)) {
+        const texts: string[] = [];
+        for (const item of content) {
+          if (item.type === "text") texts.push(item.text);
+          if (item.type === "tool_use") {
+            // 将 Claude 的 tool_use 转换为模型能理解的 JSON 格式
+            texts.push(`{"tool_calls":[{"name":"${item.name}","arguments":${JSON.stringify(item.input || {})}}]}`);
+          }
+        }
+        content = texts.join("\n");
+      }
+      glmMessages.push({ role: "assistant", content });
     }
   }
   return glmMessages;
@@ -333,7 +67,7 @@ function convertClaudeToolsToOpenAI(tools: any[]): any[] {
   }));
 }
 
-export function convertGLMToClaude(glmResponse: any, responseModel?: string): any {
+export function convertGLMToClaude(glmResponse: any): any {
   const message = glmResponse.choices[0].message;
   const content: any[] = [];
   if (message.content) {
@@ -345,7 +79,7 @@ export function convertGLMToClaude(glmResponse: any, responseModel?: string): an
         type: "tool_use",
         id: tc.id,
         name: tc.function.name,
-        input: safeJsonParse(tc.function.arguments),
+        input: typeof tc.function.arguments === "string" ? JSON.parse(tc.function.arguments) : tc.function.arguments,
       });
     }
   }
@@ -357,7 +91,7 @@ export function convertGLMToClaude(glmResponse: any, responseModel?: string): an
     type: "message",
     role: "assistant",
     content,
-    model: normalizeClaudeModelName(responseModel || glmResponse.model),
+    model: MODEL_NAME,
     stop_reason: stopReason,
     stop_sequence: null,
     usage: {
@@ -367,9 +101,8 @@ export function convertGLMToClaude(glmResponse: any, responseModel?: string): an
   };
 }
 
-export function convertGLMStreamToClaude(glmStream: ReadableStream, responseModel?: string): ReadableStream {
+export function convertGLMStreamToClaude(glmStream: ReadableStream): ReadableStream {
   const encoder = new TextEncoder();
-  const resolvedModel = normalizeClaudeModelName(responseModel);
   return new ReadableStream({
     async start(controller) {
       const reader = glmStream.getReader();
@@ -377,12 +110,10 @@ export function convertGLMStreamToClaude(glmStream: ReadableStream, responseMode
       const messageId = uuid();
       let isFirstChunk = true;
       let textBlockStarted = false;
-      let textBlockUsed = false;
       let toolBlockIndex = -1;
       let toolBlockStarted = false;
       let sentToolIds = new Set<string>();
       let streamClosed = false;
-      let lastUsage = { prompt_tokens: 0, completion_tokens: 0 };
 
       const safeEnqueue = (data: Uint8Array) => {
         if (!streamClosed) controller.enqueue(data);
@@ -393,8 +124,8 @@ export function convertGLMStreamToClaude(glmStream: ReadableStream, responseMode
           type: "message_start",
           message: {
             id: messageId, type: "message", role: "assistant", content: [],
-            model: resolvedModel, stop_reason: null, stop_sequence: null,
-            usage: { input_tokens: lastUsage.prompt_tokens || 0, output_tokens: 0 },
+            model: MODEL_NAME, stop_reason: null, stop_sequence: null,
+            usage: { input_tokens: 0, output_tokens: 0 },
           },
         })}\n\n`));
       };
@@ -402,7 +133,6 @@ export function convertGLMStreamToClaude(glmStream: ReadableStream, responseMode
       const sendTextBlockStart = () => {
         if (textBlockStarted) return;
         textBlockStarted = true;
-        textBlockUsed = true;
         safeEnqueue(encoder.encode(`event: content_block_start\ndata: ${JSON.stringify({
           type: "content_block_start", index: 0, content_block: { type: "text", text: "" },
         })}\n\n`));
@@ -455,23 +185,13 @@ export function convertGLMStreamToClaude(glmStream: ReadableStream, responseMode
         })}\n\n`));
       };
 
-      const sendErrorEvent = (message: string, code = "internal_error", type = "api_error") => {
-        if (streamClosed) return;
-        streamClosed = true;
-        safeEnqueue(encoder.encode(`event: error\ndata: ${JSON.stringify({
-          type: "error",
-          error: { type, message, code, param: null },
-        })}\n\n`));
-        controller.close();
-      };
-
       const sendMessageStop = (stopReason: string) => {
         if (streamClosed) return;
         streamClosed = true;
         safeEnqueue(encoder.encode(`event: message_delta\ndata: ${JSON.stringify({
           type: "message_delta",
           delta: { stop_reason: stopReason, stop_sequence: null },
-          usage: { output_tokens: lastUsage.completion_tokens || 0 },
+          usage: { output_tokens: 1 },
         })}\n\n`));
         safeEnqueue(encoder.encode(`event: message_stop\ndata: ${JSON.stringify({
           type: "message_stop",
@@ -481,33 +201,10 @@ export function convertGLMStreamToClaude(glmStream: ReadableStream, responseMode
 
       const parser = createParser((event) => {
         try {
-          if (!event.data || event.data === "[DONE]") {
-            if (!streamClosed && !isFirstChunk) {
-              sendTextBlockStop();
-              if (toolBlockStarted) sendToolBlockStop(toolBlockIndex);
-              sendMessageStop("end_turn");
-            }
-            return;
-          }
-
-          if (!event.data.trim().startsWith("{")) {
-            return;
-          }
-
           const data = JSON.parse(event.data);
-          if (data.error) {
-            sendErrorEvent(data.error.message || "upstream stream error");
-            return;
-          }
           if (data.choices && data.choices[0]) {
             const delta = data.choices[0].delta;
             const finishReason = data.choices[0].finish_reason;
-            if (data.usage) {
-              lastUsage = {
-                prompt_tokens: data.usage.prompt_tokens || lastUsage.prompt_tokens,
-                completion_tokens: data.usage.completion_tokens || lastUsage.completion_tokens,
-              };
-            }
 
             if (isFirstChunk) {
               sendMessageStart();
@@ -522,12 +219,8 @@ export function convertGLMStreamToClaude(glmStream: ReadableStream, responseMode
 
             // 处理工具调用（在 finish 时一次性发送）
             if (delta.tool_calls && Array.isArray(delta.tool_calls)) {
-              const baseIndex = textBlockUsed ? 1 : 0;
-              if (textBlockStarted) {
-                sendTextBlockStop();
-              }
               delta.tool_calls.forEach((tc: any, i: number) => {
-                const idx = baseIndex + i;
+                const idx = textBlockStarted ? i + 1 : i;
                 sendToolBlockStart(tc, idx);
                 const args = typeof tc.function?.arguments === "string"
                   ? tc.function.arguments
@@ -582,17 +275,16 @@ export function convertGLMStreamToClaude(glmStream: ReadableStream, responseMode
 
 export async function createClaudeCompletion(
   model: string, messages: any[], system: string | any[] | undefined,
-  refreshToken: string, stream = false, conversationId?: string, tools?: any[], responseModel?: string
+  refreshToken: string, stream = false, conversationId?: string, tools?: any[]
 ): Promise<any | ReadableStream> {
   const glmMessages = convertClaudeToGLM(messages, system);
   const openaiTools = tools && tools.length > 0 ? convertClaudeToolsToOpenAI(tools) : undefined;
-  const claudeResponseModel = normalizeClaudeModelName(responseModel || model);
   if (stream) {
     const glmStream = await createCompletionStream(glmMessages, refreshToken, model, conversationId, 0, openaiTools);
-    return convertGLMStreamToClaude(glmStream, claudeResponseModel);
+    return convertGLMStreamToClaude(glmStream);
   } else {
     const glmResponse = await createCompletion(glmMessages, refreshToken, model, conversationId, 0, openaiTools);
-    return convertGLMToClaude(glmResponse, claudeResponseModel);
+    return convertGLMToClaude(glmResponse);
   }
 }
 
