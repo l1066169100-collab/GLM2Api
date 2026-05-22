@@ -765,6 +765,84 @@ async function uploadFile(fileUrl: string, refreshToken: string, isVideoImage = 
   return uploadResult.result;
 }
 
+function upsertCachedParts(cachedParts: any[], parts: any[]) {
+  if (!isArray(parts) || parts.length === 0) return;
+  parts.forEach((part: any) => {
+    if (!isObject(part)) return;
+    const logicId = part.logic_id;
+    if (logicId) {
+      const index = cachedParts.findIndex((value: any) => value.logic_id === logicId);
+      if (index !== -1) cachedParts[index] = part;
+      else cachedParts.push(part);
+      return;
+    }
+    cachedParts.push(part);
+  });
+}
+
+function buildSearchMapFromParts(cachedParts: any[]): Map<string, any> {
+  const searchMap = new Map<string, any>();
+  cachedParts.forEach((part) => {
+    if (!part.content || !isArray(part.content)) return;
+    const { meta_data } = part;
+    part.content.forEach((item: any) => {
+      if (item.type == "tool_result" && meta_data?.tool_result_extra?.search_results) {
+        meta_data.tool_result_extra.search_results.forEach((res: any) => {
+          if (res.match_key) searchMap.set(res.match_key, res);
+        });
+      }
+    });
+  });
+  return searchMap;
+}
+
+function buildMessageFromCachedParts(cachedParts: any[], isSilentModel: boolean): { fullText: string; fullReasoning: string } {
+  const searchMap = buildSearchMapFromParts(cachedParts);
+  const keyToIdMap = new Map<string, number>();
+  let counter = 1;
+  let fullText = "";
+  let fullReasoning = "";
+
+  cachedParts.forEach((part: any) => {
+    const { content, meta_data } = part;
+    if (!isArray(content)) return;
+    let partText = "";
+    let partReasoning = "";
+    content.forEach((value: any) => {
+      const { type, text, think, image, code, content: innerContent } = value;
+      if (type == "text") {
+        let txt = text;
+        if (searchMap.size > 0 && isString(txt)) {
+          txt = txt.replace(/【?(turn\d+[a-zA-Z]+\d+)】?/g, (match: string, key: string) => {
+            const searchInfo = searchMap.get(key);
+            if (!searchInfo) return match;
+            if (!keyToIdMap.has(key)) keyToIdMap.set(key, counter++);
+            const newId = keyToIdMap.get(key);
+            return ` [${newId}](${searchInfo.url})`;
+          });
+        }
+        partText += txt || "";
+      } else if (type == "think" && !isSilentModel) {
+        partReasoning += think || "";
+      } else if (type == "tool_result" && meta_data?.tool_result_extra?.search_results && isArray(meta_data.tool_result_extra.search_results) && !isSilentModel) {
+        partReasoning += meta_data.tool_result_extra.search_results.reduce((meta: string, v: any) => meta + `> 检索 ${v.title}(${v.url}) ...\n`, "");
+      } else if (type == "quote_result" && part.status == "finish" && meta_data && isArray(meta_data.metadata_list) && !isSilentModel) {
+        partReasoning += meta_data.metadata_list.reduce((meta: string, v: any) => meta + `> 检索 ${v.title}(${v.url}) ...\n`, "");
+      } else if (type == "image" && isArray(image) && part.status == "finish") {
+        partText += image.reduce((imgs: string, v: any) => imgs + (/^(http|https):\/\//.test(v.image_url) ? `![图像](${v.image_url || ""})` : ""), "") + "\n";
+      } else if (type == "code") {
+        partText += "\`\`\`python\n" + code + (part.status == "finish" ? "\n\`\`\`\n" : "");
+      } else if (type == "execution_output" && isString(innerContent) && part.status == "finish") {
+        partText += innerContent + "\n";
+      }
+    });
+    if (partText) fullText += (fullText.length > 0 ? "\n" : "") + partText;
+    if (partReasoning) fullReasoning += (fullReasoning.length > 0 ? "\n" : "") + partReasoning;
+  });
+
+  return { fullText, fullReasoning };
+}
+
 async function receiveStream(model: string, readableStream: ReadableStream, tools?: any[]): Promise<any> {
   return new Promise((resolve, reject) => {
     const data = {
@@ -780,67 +858,24 @@ async function receiveStream(model: string, readableStream: ReadableStream, tool
         const result = attempt(() => JSON.parse(event.data));
         if (isError(result)) throw new Error(`Stream response invalid: ${event.data}`);
         if (!data.id && result.conversation_id) data.id = result.conversation_id;
-        if (result.status != "finish") {
-          if (result.parts) { cachedParts.length = 0; cachedParts.push(...result.parts); }
-          const searchMap = new Map<string, any>();
-          cachedParts.forEach((part) => {
-            if (!part.content || !isArray(part.content)) return;
-            const { meta_data } = part;
-            part.content.forEach((item: any) => {
-              if (item.type == "tool_result" && meta_data?.tool_result_extra?.search_results) {
-                meta_data.tool_result_extra.search_results.forEach((res: any) => { if (res.match_key) searchMap.set(res.match_key, res); });
-              }
-            });
-          });
-          const keyToIdMap = new Map<string, number>();
-          let counter = 1;
-          let fullText = "";
-          let fullReasoning = "";
-          cachedParts.forEach((part: any) => {
-            const { content, meta_data } = part;
-            if (!isArray(content)) return;
-            let partText = "";
-            let partReasoning = "";
-            content.forEach((value: any) => {
-              const { type, text, think, image, code, content: innerContent } = value;
-              if (type == "text") {
-                let txt = text;
-                if (searchMap.size > 0) {
-                  txt = txt.replace(/【?(turn\d+[a-zA-Z]+\d+)】?/g, (match: string, key: string) => {
-                    const searchInfo = searchMap.get(key);
-                    if (!searchInfo) return match;
-                    if (!keyToIdMap.has(key)) keyToIdMap.set(key, counter++);
-                    const newId = keyToIdMap.get(key);
-                    return ` [${newId}](${searchInfo.url})`;
-                  });
-                }
-                partText += txt;
-              } else if (type == "think" && !isSilentModel) {
-                partReasoning += think;
-              } else if (type == "tool_result" && meta_data?.tool_result_extra?.search_results && isArray(meta_data.tool_result_extra.search_results) && !isSilentModel) {
-                partReasoning += meta_data.tool_result_extra.search_results.reduce((meta: string, v: any) => meta + `> 检索 ${v.title}(${v.url}) ...\n`, "");
-              } else if (type == "quote_result" && part.status == "finish" && meta_data && isArray(meta_data.metadata_list) && !isSilentModel) {
-                partReasoning += meta_data.metadata_list.reduce((meta: string, v: any) => meta + `> 检索 ${v.title}(${v.url}) ...\n`, "");
-              } else if (type == "image" && isArray(image) && part.status == "finish") {
-                partText += image.reduce((imgs: string, v: any) => imgs + (/^(http|https):\/\//.test(v.image_url) ? `![图像](${v.image_url || ""})` : ""), "") + "\n";
-              } else if (type == "code") {
-                partText += "\`\`\`python\n" + code + (part.status == "finish" ? "\n\`\`\`\n" : "");
-              } else if (type == "execution_output" && isString(innerContent) && part.status == "finish") {
-                partText += innerContent + "\n";
-              }
-            });
-            if (partText) fullText += (fullText.length > 0 ? "\n" : "") + partText;
-            if (partReasoning) fullReasoning += (fullReasoning.length > 0 ? "\n" : "") + partReasoning;
-          });
+        if (result.parts) {
+          upsertCachedParts(cachedParts, result.parts);
+        }
+        const { fullText, fullReasoning } = buildMessageFromCachedParts(cachedParts, isSilentModel);
+        data.choices[0].message.content = fullText;
+        // 工具调用场景下不泄露思维链，避免污染客户端响应
+        if (!(tools && tools.length > 0)) {
+          (data.choices[0].message as any).reasoning_content = fullReasoning || null;
+        }
+        if (result.status != "finish" && result.status != "intervene") {
           data.choices[0].message.content = fullText;
-          // 工具调用场景下不泄露思维链，避免污染客户端响应
-          if (!(tools && tools.length > 0)) {
-            (data.choices[0].message as any).reasoning_content = fullReasoning || null;
-          }
         } else {
           let content = data.choices[0].message.content;
           content = content.replace(/【\d+†(来源|源|source)】/g, "");
           data.choices[0].message.content = content;
+          if (result.status == "intervene" && result.last_error?.intervene_text) {
+            data.choices[0].message.content += `${data.choices[0].message.content ? "\n\n" : ""}${result.last_error.intervene_text}`;
+          }
           if (tools && tools.length > 0) {
             const parsed = parseToolCalls(content);
             if (parsed.tool_calls) {
@@ -897,124 +932,73 @@ function createTransStream(model: string, readableStream: ReadableStream, endCal
         try {
           const result = attempt(() => JSON.parse(event.data));
           if (isError(result)) return;
-          if (result.status != "finish" && result.status != "intervene") {
-            if (result.parts) {
-              result.parts.forEach((part: any) => {
-                const index = cachedParts.findIndex((p) => p.logic_id === part.logic_id);
-                if (index !== -1) cachedParts[index] = part;
-                else cachedParts.push(part);
-              });
-            }
-            const searchMap = new Map<string, any>();
-            cachedParts.forEach((part) => {
-              if (!part.content || !isArray(part.content)) return;
-              const { meta_data } = part;
-              part.content.forEach((item: any) => {
-                if (item.type == "tool_result" && meta_data?.tool_result_extra?.search_results) {
-                  meta_data.tool_result_extra.search_results.forEach((res: any) => { if (res.match_key) searchMap.set(res.match_key, res); });
+          if (result.parts) {
+            upsertCachedParts(cachedParts, result.parts);
+          }
+          const { fullText, fullReasoning } = buildMessageFromCachedParts(cachedParts, isSilentModel);
+          const reasoningChunk = fullReasoning.substring(sentReasoning.length);
+          // 工具调用场景下不泄露思维链，避免污染客户端响应
+          if (reasoningChunk && !(tools && tools.length > 0)) {
+            sentReasoning += reasoningChunk;
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+              id: result.conversation_id, model: MODEL_NAME, object: "chat.completion.chunk",
+              choices: [{ index: 0, delta: { reasoning_content: reasoningChunk }, finish_reason: null }],
+              created,
+            })}\n\n`));
+          } else if (reasoningChunk) {
+            sentReasoning += reasoningChunk;
+          }
+          const chunk = fullText.substring(sentContent.length);
+          if (chunk) {
+            sentContent += chunk;
+            fullContent += chunk;
+            // 智能缓冲：检测是否可能是纯工具调用 JSON，避免先发送部分 JSON 文本
+            if (!isToolCallMode && tools && tools.length > 0) {
+              const trimmed = fullContent.trim();
+              if (!mightBeToolCall) {
+                // 如果内容以 { 开头，可能是工具调用，进入缓冲模式
+                if (trimmed.startsWith("{")) {
+                  mightBeToolCall = true;
+                  pendingContent += chunk;
+                } else {
+                  // 不以 { 开头，直接发送
+                  controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+                    id: result.conversation_id, model: MODEL_NAME, object: "chat.completion.chunk",
+                    choices: [{ index: 0, delta: { content: chunk }, finish_reason: null }],
+                    created,
+                  })}\n\n`));
                 }
-              });
-            });
-            const keyToIdMap = new Map<string, number>();
-            let counter = 1;
-            let fullText = "";
-            let fullReasoning = "";
-            cachedParts.forEach((part: any) => {
-              const { content, meta_data } = part;
-              if (!isArray(content)) return;
-              let partText = "";
-              let partReasoning = "";
-              content.forEach((value: any) => {
-                const { type, text, think, image, code, content: innerContent } = value;
-                if (type == "text") {
-                  let txt = text;
-                  if (searchMap.size > 0) {
-                    txt = txt.replace(/【?(turn\d+[a-zA-Z]+\d+)】?/g, (match: string, key: string) => {
-                      const searchInfo = searchMap.get(key);
-                      if (!searchInfo) return match;
-                      if (!keyToIdMap.has(key)) keyToIdMap.set(key, counter++);
-                      const newId = keyToIdMap.get(key);
-                      return ` [${newId}](${searchInfo.url})`;
-                    });
-                  }
-                  partText += txt;
-                } else if (type == "think" && !isSilentModel) {
-                  partReasoning += think;
-                } else if (type == "tool_result" && meta_data?.tool_result_extra?.search_results && isArray(meta_data.tool_result_extra.search_results) && !isSilentModel) {
-                  partReasoning += meta_data.tool_result_extra.search_results.reduce((meta: string, v: any) => meta + `> 检索 ${v.title}(${v.url}) ...\n`, "");
-                } else if (type == "quote_result" && part.status == "finish" && meta_data && isArray(meta_data.metadata_list) && !isSilentModel) {
-                  partReasoning += meta_data.metadata_list.reduce((meta: string, v: any) => meta + `> 检索 ${v.title}(${v.url}) ...\n`, "");
-                } else if (type == "image" && isArray(image) && part.status == "finish") {
-                  partText += image.reduce((imgs: string, v: any) => imgs + (/^(http|https):\/\//.test(v.image_url) ? `![图像](${v.image_url || ""})` : ""), "") + "\n";
-                } else if (type == "code") {
-                  partText += "\`\`\`python\n" + code + (part.status == "finish" ? "\n\`\`\`\n" : "");
-                } else if (type == "execution_output" && isString(innerContent) && part.status == "finish") {
-                  partText += innerContent + "\n";
-                }
-              });
-              if (partText) fullText += (fullText.length > 0 ? "\n" : "") + partText;
-              if (partReasoning) fullReasoning += (fullReasoning.length > 0 ? "\n" : "") + partReasoning;
-            });
-            const reasoningChunk = fullReasoning.substring(sentReasoning.length);
-            // 工具调用场景下不泄露思维链，避免污染客户端响应
-            if (reasoningChunk && !(tools && tools.length > 0)) {
-              sentReasoning += reasoningChunk;
-              controller.enqueue(encoder.encode(`data: ${JSON.stringify({
-                id: result.conversation_id, model: MODEL_NAME, object: "chat.completion.chunk",
-                choices: [{ index: 0, delta: { reasoning_content: reasoningChunk }, finish_reason: null }],
-                created,
-              })}\n\n`));
-            } else if (reasoningChunk) {
-              sentReasoning += reasoningChunk;
-            }
-            const chunk = fullText.substring(sentContent.length);
-            if (chunk) {
-              sentContent += chunk;
-              fullContent += chunk;
-              // 智能缓冲：检测是否可能是纯工具调用 JSON，避免先发送部分 JSON 文本
-              if (!isToolCallMode && tools && tools.length > 0) {
-                const trimmed = fullContent.trim();
-                if (!mightBeToolCall) {
-                  // 如果内容以 { 开头，可能是工具调用，进入缓冲模式
-                  if (trimmed.startsWith("{")) {
-                    mightBeToolCall = true;
-                    pendingContent += chunk;
+              } else {
+                // 已在缓冲模式，继续累积
+                pendingContent += chunk;
+                // 当累积足够内容后，判断是否是工具调用
+                if (trimmed.length >= 20) {
+                  if (trimmed.includes('"tool_calls"') || trimmed.includes("'tool_calls'") || trimmed.includes("tool_calls")) {
+                    isToolCallMode = true;
+                    pendingContent = "";
                   } else {
-                    // 不以 { 开头，直接发送
+                    // 不是工具调用，一次性发送缓冲内容
+                    mightBeToolCall = false;
                     controller.enqueue(encoder.encode(`data: ${JSON.stringify({
                       id: result.conversation_id, model: MODEL_NAME, object: "chat.completion.chunk",
-                      choices: [{ index: 0, delta: { content: chunk }, finish_reason: null }],
+                      choices: [{ index: 0, delta: { content: pendingContent }, finish_reason: null }],
                       created,
                     })}\n\n`));
-                  }
-                } else {
-                  // 已在缓冲模式，继续累积
-                  pendingContent += chunk;
-                  // 当累积足够内容后，判断是否是工具调用
-                  if (trimmed.length >= 20) {
-                    if (trimmed.includes('"tool_calls"') || trimmed.includes("'tool_calls'") || trimmed.includes("tool_calls")) {
-                      isToolCallMode = true;
-                      pendingContent = "";
-                    } else {
-                      // 不是工具调用，一次性发送缓冲内容
-                      mightBeToolCall = false;
-                      controller.enqueue(encoder.encode(`data: ${JSON.stringify({
-                        id: result.conversation_id, model: MODEL_NAME, object: "chat.completion.chunk",
-                        choices: [{ index: 0, delta: { content: pendingContent }, finish_reason: null }],
-                        created,
-                      })}\n\n`));
-                      pendingContent = "";
-                    }
+                    pendingContent = "";
                   }
                 }
-              } else if (!isToolCallMode) {
-                controller.enqueue(encoder.encode(`data: ${JSON.stringify({
-                  id: result.conversation_id, model: MODEL_NAME, object: "chat.completion.chunk",
-                  choices: [{ index: 0, delta: { content: chunk }, finish_reason: null }],
-                  created,
-                })}\n\n`));
               }
+            } else if (!isToolCallMode) {
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+                id: result.conversation_id, model: MODEL_NAME, object: "chat.completion.chunk",
+                choices: [{ index: 0, delta: { content: chunk }, finish_reason: null }],
+                created,
+              })}\n\n`));
             }
+          }
+
+          if (result.status != "finish" && result.status != "intervene") {
+            return;
           } else {
             let finishReason = "stop";
             let delta: any = result.status == "intervene" && result.last_error?.intervene_text ? { content: `\n\n${result.last_error.intervene_text}` } : {};
