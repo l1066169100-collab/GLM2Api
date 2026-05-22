@@ -1,7 +1,9 @@
 import { setSignSecret, createCompletion, createCompletionStream, generateImages, generateVideos } from "./chat.ts";
 import { createClaudeCompletion, createGeminiCompletion } from "./adapters.ts";
 import { defaultTo, isString, unixTimestamp, uuid, md5 } from "./utils.ts";
-const WELCOME_HTML = `<!DOCTYPE html>
+
+function getWelcomeHtml(apiKeyEnabled: boolean): string {
+  return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
@@ -18,7 +20,8 @@ const WELCOME_HTML = `<!DOCTYPE html>
 <body>
 <h1>GLM Free API Neo</h1>
 <p>零配置、无 KV、无管理界面的 GLM API 代理服务。</p>
-<p>每次请求自动获取访客 Token，无需 API Key，部署即用。</p>
+<p>每次请求自动获取访客 Token，默认无需上游 API Key，部署即用。</p>
+${apiKeyEnabled ? '<p><strong>当前已启用访问秘钥：</strong>请求时请携带 <code>Authorization: Bearer &lt;your-key&gt;</code> 或 <code>x-api-key</code>。</p>' : ""}
 
 <h2>支持的端点</h2>
 <div class="endpoint"><strong>POST</strong> <code>/v1/chat/completions</code> — OpenAI 格式对话</div>
@@ -31,17 +34,21 @@ const WELCOME_HTML = `<!DOCTYPE html>
 <h2>使用示例</h2>
 <pre>curl http://localhost:8787/v1/chat/completions \\
   -H "Content-Type: application/json" \\
-  -d '{"model":"glm-4-flash","messages":[{"role":"user","content":"你好"}]}'</pre>
+  ${apiKeyEnabled ? '-H "Authorization: Bearer your-key" \\\\\n  ' : ""}-d '{"model":"glm-4-flash","messages":[{"role":"user","content":"你好"}]}'</pre>
 
-<p>无需 API Key，直接调用即可。</p>
+<p>${apiKeyEnabled ? "已启用访问秘钥，请先配置后再调用。" : "无需 API Key，直接调用即可。"}</p>
 </body>
 </html>`;
+}
 
 export interface Env {
   SIGN_SECRET?: string;
+  API_KEY?: string;
+  API_KEYS?: string;
 }
 
 const DEFAULT_SIGN_SECRET = "8a1317a7468aa3ad86e997d08f3f31cb";
+const PROTECTED_PATH_PREFIXES = ["/v1", "/v1beta"];
 
 const SUPPORTED_MODELS = [
   { id: "glm5", name: "GLM-5", object: "model", owned_by: "glm-free-api-neo", description: "GLM-5 通用对话模型" },
@@ -71,6 +78,23 @@ function jsonResponse(data: any, status = 200): Response {
 
 function errorResponse(message: string, status = 400): Response {
   return jsonResponse({ code: -1, message, data: null }, status);
+}
+
+function unauthorizedResponse(message = "Invalid or missing API key"): Response {
+  return new Response(JSON.stringify({
+    error: {
+      message,
+      type: "authentication_error",
+      code: "invalid_api_key",
+    },
+  }), {
+    status: 401,
+    headers: {
+      "Content-Type": "application/json",
+      "WWW-Authenticate": "Bearer",
+      ...corsHeaders(),
+    },
+  });
 }
 
 function sseResponse(stream: ReadableStream): Response {
@@ -147,6 +171,50 @@ async function requestGuestRefreshToken(env: Env): Promise<{ refreshToken: strin
 async function authenticate(env: Env): Promise<string> {
   const guest = await requestGuestRefreshToken(env);
   return guest.refreshToken;
+}
+
+function getConfiguredApiKeys(env: Env): string[] {
+  const rawValues = [env.API_KEY, env.API_KEYS].filter(Boolean) as string[];
+  return Array.from(new Set(
+    rawValues
+      .flatMap((value) => value.split(/[\s,]+/))
+      .map((value) => value.trim())
+      .filter(Boolean)
+  ));
+}
+
+function isProtectedPath(path: string): boolean {
+  return PROTECTED_PATH_PREFIXES.some((prefix) => path.startsWith(prefix));
+}
+
+function extractBearerToken(authorization: string | null): string | null {
+  if (!authorization) return null;
+  const match = authorization.match(/^Bearer\s+(.+)$/i);
+  return match?.[1]?.trim() || null;
+}
+
+function extractApiKey(request: Request): string | null {
+  const bearerToken = extractBearerToken(request.headers.get("Authorization"));
+  if (bearerToken) return bearerToken;
+
+  const headerToken = request.headers.get("x-api-key") || request.headers.get("api-key");
+  return headerToken?.trim() || null;
+}
+
+function validateApiKey(request: Request, env: Env): Response | null {
+  const configuredKeys = getConfiguredApiKeys(env);
+  if (configuredKeys.length === 0) return null;
+
+  const providedKey = extractApiKey(request);
+  if (!providedKey) {
+    return unauthorizedResponse("Missing API key. Use Authorization: Bearer <key> or x-api-key.");
+  }
+
+  if (!configuredKeys.includes(providedKey)) {
+    return unauthorizedResponse("Invalid API key.");
+  }
+
+  return null;
 }
 
 async function handleChatCompletions(request: Request, env: Env): Promise<Response> {
@@ -291,11 +359,16 @@ export default {
       return new Response(null, { status: 204, headers: corsHeaders() });
     }
 
+    if (isProtectedPath(path)) {
+      const authError = validateApiKey(request, env);
+      if (authError) return authError;
+    }
+
     try {
       let response: Response;
 
       if (path === "/" && request.method === "GET") {
-        response = new Response(WELCOME_HTML, {
+        response = new Response(getWelcomeHtml(getConfiguredApiKeys(env).length > 0), {
           headers: { "Content-Type": "text/html", ...corsHeaders() },
         });
       } else if (path === "/v1/chat/completions" && request.method === "POST") {
