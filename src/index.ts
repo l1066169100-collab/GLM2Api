@@ -30,6 +30,8 @@ ${apiKeyEnabled ? '<p><strong>当前已启用访问秘钥：</strong>请求时�
 <div class="endpoint"><strong>POST</strong> <code>/v1/images/generations</code> — AI 绘图</div>
 <div class="endpoint"><strong>POST</strong> <code>/v1/videos/generations</code> — 视频生成</div>
 <div class="endpoint"><strong>GET</strong> <code>/v1/models</code> — 模型列表</div>
+<div class="endpoint"><strong>POST</strong> <code>/chat/completions</code> — OpenAI 根路径别名</div>
+<div class="endpoint"><strong>GET</strong> <code>/healthz</code> / <code>/readyz</code> — 健康检查</div>
 
 <h2>使用示例</h2>
 <pre>curl http://localhost:8787/v1/chat/completions \\
@@ -48,10 +50,36 @@ export interface Env {
 }
 
 const DEFAULT_SIGN_SECRET = "8a1317a7468aa3ad86e997d08f3f31cb";
-const PROTECTED_PATH_PREFIXES = ["/v1", "/v1beta"];
+const PROTECTED_PATH_PREFIXES = ["/v1", "/v1beta", "/messages", "/models", "/chat"];
+
+type ModelInfo = {
+  id: string;
+  object: "model";
+  created: number;
+  owned_by: string;
+  description?: string;
+  permission?: any[];
+};
 
 const SUPPORTED_MODELS = [
-  { id: "glm5", name: "GLM-5", object: "model", owned_by: "glm-free-api-neo", description: "GLM-5 通用对话模型" },
+  { id: "glm-5", object: "model", created: 1677610602, owned_by: "glm", description: "GLM-5 通用对话模型", permission: [] },
+  { id: "glm-4-flash", object: "model", created: 1677610602, owned_by: "glm", description: "GLM-4 Flash 快速对话模型", permission: [] },
+  { id: "glm-4-plus", object: "model", created: 1677610602, owned_by: "glm", description: "GLM-4 Plus 通用增强模型", permission: [] },
+  { id: "glm-4.5", object: "model", created: 1677610602, owned_by: "glm", description: "GLM-4.5 通用模型", permission: [] },
+];
+
+const CLAUDE_MODELS: ModelInfo[] = [
+  { id: "claude-opus-4-6", object: "model", created: 1715635200, owned_by: "anthropic", permission: [] },
+  { id: "claude-sonnet-4-6", object: "model", created: 1715635200, owned_by: "anthropic", permission: [] },
+  { id: "claude-haiku-4-5", object: "model", created: 1715635200, owned_by: "anthropic", permission: [] },
+  { id: "claude-sonnet-4-5", object: "model", created: 1715635200, owned_by: "anthropic", permission: [] },
+  { id: "claude-opus-4-1", object: "model", created: 1715635200, owned_by: "anthropic", permission: [] },
+  { id: "claude-opus-4-0", object: "model", created: 1715635200, owned_by: "anthropic", permission: [] },
+  { id: "claude-3-7-sonnet-latest", object: "model", created: 1715635200, owned_by: "anthropic", permission: [] },
+  { id: "claude-3-5-sonnet-latest", object: "model", created: 1715635200, owned_by: "anthropic", permission: [] },
+  { id: "claude-3-opus-20240229", object: "model", created: 1715635200, owned_by: "anthropic", permission: [] },
+  { id: "claude-3-sonnet-20240229", object: "model", created: 1715635200, owned_by: "anthropic", permission: [] },
+  { id: "claude-3-haiku-20240307", object: "model", created: 1715635200, owned_by: "anthropic", permission: [] },
 ];
 
 const GEMINI_MODELS = [
@@ -60,6 +88,54 @@ const GEMINI_MODELS = [
   { name: "models/gemini-pro", displayName: "Gemini Pro", description: "Previous generation model", inputTokenLimit: 32768, outputTokenLimit: 2048, supportedGenerationMethods: ["generateContent", "streamGenerateContent"] },
   { name: "models/glm-5", displayName: "GLM-5", description: "GLM-5 chat model via adapter", inputTokenLimit: 32768, outputTokenLimit: 8192, supportedGenerationMethods: ["generateContent", "streamGenerateContent"] },
 ];
+
+const MODEL_ALIASES: Record<string, string> = {
+  "chatgpt-4o": "glm-4-flash",
+  "gpt-4": "glm-4-flash",
+  "gpt-4-turbo": "glm-4-flash",
+  "gpt-4o": "glm-4-flash",
+  "gpt-4o-mini": "glm-4-flash",
+  "gpt-4.1": "glm-4-flash",
+  "gpt-4.1-mini": "glm-4-flash",
+  "gpt-5": "glm-5",
+  "gpt-5-chat": "glm-5",
+  "gpt-5.1": "glm-5",
+  "gpt-5.2": "glm-5",
+  "gpt-5.3-chat": "glm-5",
+  "gpt-5.4": "glm-5",
+  "gpt-5.5": "glm-5",
+  "gpt-5-mini": "glm-4-flash",
+  "gpt-5-pro": "glm-4-plus",
+  "gpt-5-codex": "glm-4-plus",
+  "gpt-5.3-codex": "glm-4-plus",
+  "codex-mini-latest": "glm-4-plus",
+  "o1": "glm-4-plus",
+  "o1-preview": "glm-4-plus",
+  "o1-mini": "glm-4-plus",
+  "o3": "glm-4-plus",
+  "o3-mini": "glm-4-plus",
+  "o3-pro": "glm-4-plus",
+  "claude-opus-4-6": "glm-4-plus",
+  "claude-opus-4-1": "glm-4-plus",
+  "claude-opus-4-0": "glm-4-plus",
+  "claude-sonnet-4-6": "glm-4-flash",
+  "claude-sonnet-4-5": "glm-4-flash",
+  "claude-sonnet-4-0": "glm-4-flash",
+  "claude-haiku-4-5": "glm-4-flash",
+  "claude-3-7-sonnet": "glm-4-flash",
+  "claude-3-5-sonnet": "glm-4-flash",
+  "claude-3-opus": "glm-4-plus",
+  "claude-3-sonnet": "glm-4-flash",
+  "claude-3-haiku": "glm-4-flash",
+  "gemini-pro": "glm-4-plus",
+  "gemini-1.5-pro": "glm-4-plus",
+  "gemini-1.5-flash": "glm-4-flash",
+  "gemini-2.0-flash": "glm-4-flash",
+  "gemini-2.5-pro": "glm-4-plus",
+  "gemini-2.5-flash": "glm-4-flash",
+  "gemini-3-pro": "glm-4-plus",
+  "gemini-3-flash": "glm-4-flash",
+};
 
 function corsHeaders(): Record<string, string> {
   return {
@@ -92,6 +168,68 @@ function unauthorizedResponse(message = "Invalid or missing API key"): Response 
     headers: {
       "Content-Type": "application/json",
       "WWW-Authenticate": "Bearer",
+      ...corsHeaders(),
+    },
+  });
+}
+
+function openAIErrorType(status: number): string {
+  switch (status) {
+    case 400:
+      return "invalid_request_error";
+    case 401:
+      return "authentication_error";
+    case 403:
+      return "permission_error";
+    case 429:
+      return "rate_limit_error";
+    case 503:
+      return "service_unavailable_error";
+    default:
+      return status >= 500 ? "api_error" : "invalid_request_error";
+  }
+}
+
+function openAIErrorResponse(message: string, status: number): Response {
+  return new Response(JSON.stringify({
+    error: {
+      message,
+      type: openAIErrorType(status),
+    },
+  }), {
+    status,
+    headers: { "Content-Type": "application/json", ...corsHeaders() },
+  });
+}
+
+function claudeErrorCode(status: number): string {
+  switch (status) {
+    case 401:
+      return "authentication_failed";
+    case 404:
+      return "not_found";
+    case 429:
+      return "rate_limit_exceeded";
+    case 500:
+      return "internal_error";
+    default:
+      return "invalid_request";
+  }
+}
+
+function claudeErrorResponse(message: string, status: number): Response {
+  return new Response(JSON.stringify({
+    error: {
+      type: "invalid_request_error",
+      message,
+      code: claudeErrorCode(status),
+      param: null,
+    },
+  }), {
+    status,
+    headers: {
+      "Content-Type": "application/json",
+      "anthropic-version": "2023-06-01",
       ...corsHeaders(),
     },
   });
@@ -193,11 +331,32 @@ function extractBearerToken(authorization: string | null): string | null {
   return match?.[1]?.trim() || null;
 }
 
+function normalizeModelName(model: any): string {
+  const text = isString(model) ? model.trim() : "";
+  if (!text) return "glm-4-flash";
+
+  const lower = text.toLowerCase();
+  return MODEL_ALIASES[lower] || text;
+}
+
+function resolveClaudeResponseModel(model: any): string {
+  const text = isString(model) ? model.trim() : "";
+  return text || "claude-sonnet-4-6";
+}
+
 function extractApiKey(request: Request): string | null {
   const bearerToken = extractBearerToken(request.headers.get("Authorization"));
   if (bearerToken) return bearerToken;
 
-  const headerToken = request.headers.get("x-api-key") || request.headers.get("api-key");
+  const headerToken = request.headers.get("x-api-key")
+    || request.headers.get("api-key")
+    || request.headers.get("x-goog-api-key");
+  if (headerToken?.trim()) return headerToken.trim();
+
+  const url = new URL(request.url);
+  const queryToken = url.searchParams.get("key") || url.searchParams.get("api_key");
+  if (queryToken?.trim()) return queryToken.trim();
+
   return headerToken?.trim() || null;
 }
 
@@ -223,28 +382,120 @@ async function handleChatCompletions(request: Request, env: Env): Promise<Respon
 
   if (!Array.isArray(body.messages)) throw new Error("messages must be an array");
 
-  const { model, conversation_id: convId, messages, stream, tools, tool_choice } = body;
+  const { model, conversation_id: convId, messages, stream, tools } = body;
+  const normalizedModel = normalizeModelName(model);
   if (stream) {
-    const glmStream = await createCompletionStream(messages, refreshToken, model, convId, 0, tools);
+    const glmStream = await createCompletionStream(messages, refreshToken, normalizedModel, convId, 0, tools);
     return sseResponse(glmStream);
   } else {
-    const result = await createCompletion(messages, refreshToken, model, convId, 0, tools);
+    const result = await createCompletion(messages, refreshToken, normalizedModel, convId, 0, tools);
     return jsonResponse(result);
   }
 }
 
 async function handleClaudeMessages(request: Request, env: Env): Promise<Response> {
+  const requestWithVersion = new Request(request, {
+    headers: new Headers(request.headers),
+  });
+  if (!requestWithVersion.headers.get("anthropic-version")) {
+    requestWithVersion.headers.set("anthropic-version", "2023-06-01");
+  }
+
   const refreshToken = await authenticate(env);
-  const body = (await request.json()) as any;
+  const body = (await requestWithVersion.json()) as any;
 
   if (!Array.isArray(body.messages)) throw new Error("messages must be an array");
 
   const { model, messages, system, stream, conversation_id: convId, tools } = body;
-  const result = await createClaudeCompletion(model, messages, system, refreshToken, stream, convId, tools);
+  const result = await createClaudeCompletion(
+    normalizeModelName(model),
+    messages,
+    system,
+    refreshToken,
+    stream,
+    convId,
+    tools,
+    resolveClaudeResponseModel(model),
+  );
   if (stream && result instanceof ReadableStream) {
-    return sseResponse(result);
+    return new Response(result, {
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "anthropic-version": requestWithVersion.headers.get("anthropic-version") || "2023-06-01",
+        ...corsHeaders(),
+      },
+    });
   }
-  return jsonResponse(result);
+  return new Response(JSON.stringify(result), {
+    headers: {
+      "Content-Type": "application/json",
+      "anthropic-version": requestWithVersion.headers.get("anthropic-version") || "2023-06-01",
+      ...corsHeaders(),
+    },
+  });
+}
+
+async function handleClaudeCountTokens(request: Request): Promise<Response> {
+  const body = (await request.json()) as any;
+  if (!isString(body?.model) || !Array.isArray(body?.messages) || body.messages.length === 0) {
+    return claudeErrorResponse("Request must include 'model' and 'messages'.", 400);
+  }
+
+  const countText = (value: any): string => {
+    if (isString(value)) return value;
+    if (Array.isArray(value)) {
+      return value.map((item: any) => {
+        if (item?.type === "text" && isString(item.text)) return item.text;
+        if (item?.type === "tool_use") return JSON.stringify(item.input || {});
+        if (item?.type === "tool_result") {
+          if (isString(item.content)) return item.content;
+          return JSON.stringify(item.content || "");
+        }
+        return "";
+      }).join("\n");
+    }
+    return JSON.stringify(value || "");
+  };
+
+  const systemText = isString(body.system)
+    ? body.system
+    : Array.isArray(body.system)
+      ? body.system
+        .filter((item: any) => item?.type === "text" && isString(item.text))
+        .map((item: any) => item.text)
+        .join("\n")
+      : "";
+  const joined = [
+    systemText,
+    ...body.messages.map((message: any) => countText(message?.content)),
+  ].filter(Boolean).join("\n");
+  const inputTokens = Math.max(1, Math.ceil(joined.length / 4));
+
+  return new Response(JSON.stringify({ input_tokens: inputTokens }), {
+    headers: {
+      "Content-Type": "application/json",
+      "anthropic-version": request.headers.get("anthropic-version") || "2023-06-01",
+      ...corsHeaders(),
+    },
+  });
+}
+
+async function handleClaudeModels(): Promise<Response> {
+  return new Response(JSON.stringify({
+    object: "list",
+    data: CLAUDE_MODELS,
+    first_id: CLAUDE_MODELS[0]?.id || null,
+    last_id: CLAUDE_MODELS[CLAUDE_MODELS.length - 1]?.id || null,
+    has_more: false,
+  }), {
+    headers: {
+      "Content-Type": "application/json",
+      "anthropic-version": "2023-06-01",
+      ...corsHeaders(),
+    },
+  });
 }
 
 async function handleGeminiModels(): Promise<Response> {
@@ -256,7 +507,7 @@ async function handleGeminiGenerateContent(request: Request, path: string, env: 
   const body = (await request.json()) as any;
 
   const modelMatch = path.match(/^\/v1beta\/models\/(.+):generateContent$/);
-  const model = modelMatch ? modelMatch[1] : "gemini-pro";
+  const model = normalizeModelName(modelMatch ? modelMatch[1] : "gemini-pro");
   const { contents, systemInstruction, conversation_id: convId } = body;
   const result = await createGeminiCompletion(model, contents, systemInstruction, refreshToken, false, convId);
   return jsonResponse(result);
@@ -267,7 +518,7 @@ async function handleGeminiStreamGenerateContent(request: Request, path: string,
   const body = (await request.json()) as any;
 
   const modelMatch = path.match(/^\/v1beta\/models\/(.+):streamGenerateContent$/);
-  const model = modelMatch ? modelMatch[1] : "gemini-pro";
+  const model = normalizeModelName(modelMatch ? modelMatch[1] : "gemini-pro");
   const { contents, systemInstruction, conversation_id: convId } = body;
   const result = await createGeminiCompletion(model, contents, systemInstruction, refreshToken, true, convId);
   if (result instanceof ReadableStream) {
@@ -283,7 +534,8 @@ async function handleImageGenerations(request: Request, env: Env): Promise<Respo
   if (!isString(body.prompt)) throw new Error("prompt must be a string");
   const prompt = body.prompt;
   const responseFormat = defaultTo(body.response_format, "url");
-  const assistantId = /^[a-z0-9]{24,}$/.test(body.model) ? body.model : undefined;
+  const normalizedModel = normalizeModelName(body.model);
+  const assistantId = /^[a-z0-9]{24,}$/.test(normalizedModel) ? normalizedModel : undefined;
   const imageUrls = await generateImages(assistantId, prompt, refreshToken);
 
   let data: any[];
@@ -329,7 +581,7 @@ async function handleVideoGenerations(request: Request, env: Env): Promise<Respo
   if (emotionalAtmosphere && !validEmotions.includes(emotionalAtmosphere)) throw new Error(`emotional_atmosphere must be one of ${validEmotions.join("/")}`);
   if (mirrorMode && !validMirrors.includes(mirrorMode)) throw new Error(`mirror_mode must be one of ${validMirrors.join("/")}`);
 
-  const result = await generateVideos(model, prompt, refreshToken, {
+  const result = await generateVideos(normalizeModelName(model), prompt, refreshToken, {
     imageUrl,
     videoStyle,
     emotionalAtmosphere,
@@ -343,7 +595,16 @@ async function handleVideoGenerations(request: Request, env: Env): Promise<Respo
 }
 
 async function handleModels(): Promise<Response> {
-  return jsonResponse({ data: SUPPORTED_MODELS });
+  return jsonResponse({ object: "list", data: SUPPORTED_MODELS });
+}
+
+async function handleModelById(path: string): Promise<Response> {
+  const modelId = decodeURIComponent(path.slice("/v1/models/".length));
+  const model = SUPPORTED_MODELS.find((item) => item.id === modelId);
+  if (!model) {
+    return openAIErrorResponse(`The model '${modelId}' does not exist`, 404);
+  }
+  return jsonResponse(model);
 }
 
 // ==================== Main Export ====================
@@ -371,9 +632,13 @@ export default {
         response = new Response(getWelcomeHtml(getConfiguredApiKeys(env).length > 0), {
           headers: { "Content-Type": "text/html", ...corsHeaders() },
         });
-      } else if (path === "/v1/chat/completions" && request.method === "POST") {
+      } else if ((path === "/v1/chat/completions" || path === "/chat/completions") && request.method === "POST") {
         response = await handleChatCompletions(request, env);
-      } else if (path === "/v1/messages" && request.method === "POST") {
+      } else if ((path === "/anthropic/v1/models") && request.method === "GET") {
+        response = await handleClaudeModels();
+      } else if ((path === "/anthropic/v1/messages/count_tokens" || path === "/v1/messages/count_tokens" || path === "/messages/count_tokens") && request.method === "POST") {
+        response = await handleClaudeCountTokens(request);
+      } else if ((path === "/anthropic/v1/messages" || path === "/v1/messages" || path === "/messages") && request.method === "POST") {
         response = await handleClaudeMessages(request, env);
       } else if (path === "/v1beta/models" && request.method === "GET") {
         response = await handleGeminiModels();
@@ -385,8 +650,13 @@ export default {
         response = await handleImageGenerations(request, env);
       } else if (path === "/v1/videos/generations" && request.method === "POST") {
         response = await handleVideoGenerations(request, env);
-      } else if (path === "/v1/models" && request.method === "GET") {
+      } else if ((path === "/v1/models" || path === "/models") && request.method === "GET") {
         response = await handleModels();
+      } else if ((path.startsWith("/v1/models/") || path.startsWith("/models/")) && request.method === "GET") {
+        const normalizedPath = path.startsWith("/models/") ? `/v1${path}` : path;
+        response = await handleModelById(normalizedPath);
+      } else if ((path === "/healthz" || path === "/readyz") && (request.method === "GET" || request.method === "HEAD")) {
+        response = jsonResponse({ status: path === "/healthz" ? "ok" : "ready" });
       } else if (path === "/ping" && request.method === "GET") {
         response = new Response("pong", { headers: corsHeaders() });
       } else {
@@ -397,6 +667,15 @@ export default {
       return response;
     } catch (err: any) {
       console.error(err);
+      if (path === "/anthropic/v1/messages"
+        || path === "/v1/messages"
+        || path === "/messages"
+        || path === "/anthropic/v1/messages/count_tokens"
+        || path === "/v1/messages/count_tokens"
+        || path === "/messages/count_tokens"
+        || path === "/anthropic/v1/models") {
+        return claudeErrorResponse(err.message || "Internal error", 500);
+      }
       return errorResponse(err.message || "Internal error", 500);
     }
   },
